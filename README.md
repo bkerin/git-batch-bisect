@@ -150,7 +150,7 @@ exactly as if the command *it receives* was run in a script context (i.e.
 without aliases etc.) in each of the commit directories.  So this works:
 
     ```
-    batch-bisect runinall 'WORKTREE_PATH=`pwd` &&' echo hello from \\\`'WORKTREE_PATH'\\\' ">>/tmp/my_log"
+    batch-bisect runinall 'WORKTREE_PATH=`pwd` &&' echo hello from \\\`'$WORKTREE_PATH'\\\' ">>/tmp/my_log"
     ```
 
     Note that the redirection will occur in a subshell before the redirection
