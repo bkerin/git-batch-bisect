@@ -1,0 +1,621 @@
+#!/usr/bin/perl -w
+
+# See the associated README.md
+
+# vim:foldmethod=marker
+
+# Pragmas and Modules # {{{1
+
+use strict;
+use warnings FATAL => 'all';
+use v5.20;
+use feature qw(signatures);
+no warnings qw(experimental::signatures);
+
+use Carp qw( confess );
+use Cwd qw( abs_path cwd );
+use Data::Dumper;
+use Fcntl;
+use File::Path qw( make_path );
+use File::Spec;
+use File::Temp qw( tempfile );
+use Getopt::Long qw( GetOptions );
+
+# }}}1
+
+# FIXXME: could do whatever the current magic is to discover our own name here
+my $pn = 'batch-bisect';   # Program Name
+
+sub system_bash ($cmd) { # {{{1 # Like system(), but use /bin/bash not /bin/sh
+    my @args = ('/bin/bash', '-c', $cmd);
+    system(@args);
+}
+sub sysck ($cmd) { # {{{1 # Like system_bash() but error check is integrated
+    not system_bash $cmd or confess "command '$cmd' returned non-zero";
+} # }}}1
+sub btck ($cmd) { # {{{1 # Like backticks but error check and chomp() are integrated
+    my $result = `$cmd`;
+    $? == 0 or confess "backtick command '$cmd' returned non-zero";
+    chomp($result);
+    return $result;
+} # }}}1
+sub btck_bash ($cmd) { # {{{1 Like backtick but use /bin/bash not /bin/sh
+
+    # Temp File Handle.  Not requesting name means it will get auto-unlinked
+    my $tfh = tempfile();
+
+    # Keep temp file descriptor open across exec so we can use it from shell
+    my $flags = fcntl $tfh, F_GETFD, 0 or die "fcntl F_GETFD: $!";
+    fcntl $tfh, F_SETFD, $flags & ~FD_CLOEXEC or die "fcntl F_SETFD: $!";
+
+    # Execute command using bash with stdout redirected to our temp file handle
+    my @args = ('/bin/bash' , '-c', "($cmd)" ." >&".fileno($tfh));
+    system(@args);
+
+    # Seek back to start of temp file and read and return its contents
+    seek $tfh, 0, 0 or die;
+    my @lines = <$tfh>;
+    return join("\n", @lines);
+
+} # }}}1
+sub mem_total () { # Total system memory accoding to /proc/meminfo, or -1 {{{1
+    # Returns the MemTotal from /proc/meminfo, or -1 on failure
+    my $regexp = '^MemTotal:\s+\K\d+(?=\s+kB)';
+    my $result = `grep -oP '$regexp' /proc/meminfo`;
+    $? == 0 or return -1;   # In case we're on BSD or something
+    chomp($result);
+    return $result;
+} # }}}1
+sub wtd () { # {{{1   # WorkTrees Dir
+
+    # This sets the policy by which we decide where worktrees for the
+    # individual commits should go
+
+    my $cwd = cwd();
+    my $cdn = [File::Spec->splitpath($cwd)]->[2];   # Current Dir Name
+    my $result = "$cwd/../$cdn.$pn";   # Current Worktree Dir Path
+    # Git's worktree namespace necessarily does this anyway: symlinking to
+    # a repo and batch-bisect start ends up creating the same worktrees as
+    # the non-symlinked repo would get.  So for (some) clarity we go ahead
+    # and do it here.
+    $result = abs_path($result);
+
+    return $result;
+
+} # }}}1
+sub cwtp ($commit) { # {{{1   Commit WorkTree Path
+
+    return wtd()."/$commit"
+
+} # }}}1
+sub trimmed_commit_list($lc, $fc, $fp, $paths) { # {{{1
+
+  # Return list of commits between $fc and $lc subject to --first-parent
+
+  my $pfpo = ($fp ? '--first-parent' : '');   # Possible --first-parent Option
+
+  # Paths Part (as string of paths).  Note that when the [$paths] argument
+  # passed to us was obtained by parsing git bisect log output these paths
+  # may be quoted.  But that shouldn't matter.
+  my $pp = join(' ', @$paths);
+
+  # Commit List
+  my @cl = split(/\n/, btck("git rev-list $pfpo $lc ^$fc -- $pp"));
+
+  # At this point @cl will include $lc which we don't want, so make sure
+  # we have it's SHA1 ($nbc might be a tag or something here) and remove it
+  my $lc_sha1 = btck("git rev-parse --verify $lc^{commit}");
+  @cl = map { $_ eq $lc_sha1 ? () : ($_) } @cl;   # Filter out $lc_sha1
+
+  return @cl;
+
+} # }}}1
+sub commit_list() { # {{{1
+
+  # Require that a bisection is in progress, and return list of commits in the
+  # current bisection by parsing git bisect log output.
+
+  my $blo = btck("git bisect log");   # Bisect Log Output
+
+  # FIXXME: I'd rather use --term-old and --term-new here, and git bisect
+  # terms supports them but doesn't document that support at the moment so
+  # I'm staying iwth good/bad for now
+  my $old_term = btck("git bisect terms --term-good");
+  my $new_term = btck("git bisect terms --term-bad");
+
+  # FIXXME: this is probably fragile and it might be better to look in
+  # ./.git/refs/bisect or something
+  #
+  # FIXME: what if we have multiple old commits specced on command line?
+  # First and second lines are the initial old/new commits
+  my ($bl1, $bl2) = (split(/\n/, $blo))[0,1];   # $blo line 1/2
+  my $mcc = 27;   # I think commits as showin in log are always >this long
+  $bl1 =~ m/^# \Q$new_term\E: \[([a-f0-9]{$mcc,})\]\s+.*$/m
+      or confess "unexpected match failure";
+  my $lc = $1;   # Last Commit
+  $bl2 =~ m/^# \Q$old_term\E: \[([a-f0-9]{$mcc,})\]\s+.*$/m
+      or confess "unexpected match failure";
+  my $fc = $1;   # First Commit
+
+  $blo =~ m/^git bisect start (.*)$/m or confess "unexpected match failure";
+  my $bsoaa = $1;   # Bisect Start Opts And Args
+
+  my $fp = ($bsoaa =~ m/'(--first-parent)'/);   # --first-parent?
+
+  # Paths arguments (if any) as an array
+  my @paths = split(' ', ($bsoaa =~ m/'--'\s+([^\s].*)$/ ? $1 : ''));
+
+  my @cl = trimmed_commit_list($lc, $fc, $fp, \@paths);
+
+  return @cl;
+
+} # }}}1
+sub opt_descriptions ($opts) { # {{{1
+
+    # Return a more man-esque array of option descrtiptions from the kind
+    # normally given to GetOptions
+
+    return [ sort map {  m/^([-\w|?]+)$/ ?
+                         "--$1" :
+                         ( m/^([-\w|]+)=i/ ?
+                           "--$1=INT" :
+                           ( m/^([-\w|]+)=f/ ?
+                             "--$1=FLOAT" :
+                             ( m/^([-\w|]+)=s/ ?
+                               "--$1=STRING_maybe_auto_or_array_or_other" :
+                               () ) ) ) }
+                      %$opts ];
+} # }}}1
+sub usage ($action, $opts, $args) # {{{1
+{
+    return(
+        "\n  $pn $action usage:\n\n  $0\n    ".
+        join("\n    ", @{opt_descriptions($opts)})."\n    $args\n\n" );
+} # }}}1
+sub cnoa ($avr, $relation, $count, $action) { # Check Number Of Arguments {{{1
+
+    my $ac = scalar(@$avr);   # Arg Count (from @ARGV ref)
+
+    my $is_correct = 1;
+    if    ( $relation eq '==' ) {
+        ($ac == $count) or ($is_correct = 0);
+    }
+    elsif ( $relation eq '>=' ) {
+        ($ac >= $count) or ($is_correct = 0);
+    }
+    else {
+        confess "shouldn't be here";
+    }
+
+    my $staon = ($action ? " $action" : '');   # Space Then Action Or Nothing
+
+    $is_correct
+        or die "wrong number of arguments for $pn$staon, try `$pn$staon ".
+               "--help'\n";
+
+} # }}}1
+sub is_valid_term_action ($action) { # {{{1
+
+    # Return true iff $action is one of the normal term actions
+    # (new|bad|old|good) or a bisection is in progress and $action is a
+    # custom term action previously specified with --term-(new|bad|old|good).
+    # Note that true is always returned for literal (new|bad|old|good)
+    # even if the other pair of terms or a custom term action is in use
+    # (git bisect always recognizes these words even if they're wrong for
+    # the current case, so we end up wanting to let them through at this
+    # point and let git bisect show the error later).
+
+    if ( $action =~ m/^(?:new|bad|old|good)$/ ) {
+        return 1;
+    }
+    elsif ( not system("git bisect log 1>/dev/null 2>/dev/null") ) {
+        return (
+            $action eq btck("git bisect terms --term-bad")
+                or
+            $action eq btck("git bisect terms --term-good") );
+    }
+    else {
+        return 0;
+    }
+
+} # }}}1
+
+# Per-repository lock {{{1
+
+my $ld = "/tmp/$pn-locks".cwd();   # Lock Dir
+make_path($ld);
+my $lf = "$ld/lock";   # Lock File
+
+(not -e $lf and sysck("touch $lf"))
+    or die "lock file $lf already exists, and only one copy of $pn per ".
+           "repository can run at a time.  If you know the lock is stale ".
+           "simply remove it";
+
+# This will clean up the lock unless user kills us with an unhandleable signal
+END {
+    unlink($lf) or die "failed to unlink $lf: $!";
+}
+
+# }}}1
+
+cnoa(\@ARGV, ">=", 1, "");
+
+my $action = shift @ARGV;
+
+if    ( $action eq 'start' ) { # {{{1
+
+    # Option and argument parsing {{{2
+
+    my $fp = 0;   # --first-parent (flag)
+    my $hf = 0;   # Help Flag
+    my $nc = 0;   # --no-checkout (flag)
+    my ($tn, $tb, $to, $tg) = (0, 0, 0, 0);   # --term-{new,bad,old,good}
+    my %opts = (
+        "first-parent"       => \$fp,
+        "help|?"             => \$hf,
+        "no-checkout"        => \$nc,
+        "term-new=s"         => \$tn,
+        "term-bad=s"         => \$tb,
+        "term-old=s"         => \$to,
+        "term-good=s"        => \$tg );
+
+    # git bisect interprets '--' differently than GetOptions() of
+    # Getopt::Long: the former requires it to seperate [<bad> [<good>]]
+    # rev arguments from <path> arguments, while GetOptions() considers it
+    # to indicate that all the following arguments are not to be considered
+    # options (regardless of any leading '-' or '--') and filters it out
+    # when it runs.  So we have to check for it here and pop off any <path>
+    # arguments before calling GetOptions().
+    my @paths = ();
+    for ( my $ii = 0 ; $ii < @ARGV ; $ii++ ) {
+        if ( $ARGV[$ii] eq '--' ) {
+            if ( @ARGV > $ii + 1 ) {
+                push(@paths, splice(@ARGV, $ii + 1));
+            }
+        }
+    }
+
+    GetOptions(%opts)
+        or die "\nError parsing options.  Try `$pn $action --help'.\n";
+
+    if ( $hf ) {
+        print usage($action, \%opts, '<new> <old>... [--] [<path>...] ');
+        exit(0)
+    }
+
+    # Re-expanding these like this so we can pass them to the git commands is
+    # sort of dumb but keeps argument counting simple.  Users who are using
+    # quotes in their terms are boned though :)
+    my $pfpo = $fp ? '--first-parent' : '';   # Possible --first-parent Option
+    my $pnco = $nc ? '--no-checkout' : '';    # Possible --no-checkout Option
+    my $pto = (                               # Possible --term-* Options
+        ($tn ? "--term-new='$tn' "  : '') .
+        ($tb ? "--term-bad='$tb' "  : '') .
+        ($to ? "--term-old='$to' "  : '') .
+        ($tg ? "--term-good='$tg' " : '') );
+
+    # NOTE: unlike the underlying git bisect start, we require the commits
+    # that define the edges of the bisection region to be given with the
+    # start command.  This keeps the implementation much simpler since we
+    # don't have to wait until we get the bisection region defined to set up
+    # the build cache, which makes it easier to avoid ending up in a weird
+    # intermediate state if something fails.  FIXME: doc this or better add
+    # a specific explanatory error message
+    cnoa(\@ARGV, '>=', 2, $action);
+
+    # Note that we already remove any <path>s arguments above (and GetOptions()
+    # remove any '--' arguments)
+    my ($nbc, $obc) = @ARGV;   # New/Old Behavior Commit
+
+    # }}}2
+
+    # Check that $obc is an ancestor of $nbc {{{2
+
+    # The "implementation reason" referred to here is that we would have to
+    # use a different strategy for getting the range of commits.  We would
+    # have to either verify the exact equivalent git merge-base incantation
+    # that git bisect start is effectively using in this case, or else start
+    # the git bisect before setting up the worktree dirs and observse what
+    # it does to determine the range of commits to create trees for (which
+    # would confusingly leave the working dir on a bisect commit in the event
+    # of a problem creating the worktrees, or require cleanup).
+    #
+    # FIXME: we currently give this message even when new and old are
+    # outright swapped, in which case git bisect can't do anything and
+    # native git bisect correclty just gives an error message.  UPDATE: I
+    # think the thing to do is give different messages if there is or isn't
+    # a common ancestor.  I don't want to leave things to the underlying git
+    # bisect command in either case, because as of this writing it gives
+    # a message that isn't generally true in the no-common-ancestor case
+    # (as I reported to the git mailing list).
+    not system("git merge-base --is-ancestor $obc $nbc")
+        or die "$obc isn't an ancestor of $nbc.  In this situation git ".
+               "bisect normally automagically selects a common ancestor for ".
+               "the starting point.  Partly for implementation reasons and ".
+               "partly because it's sort of crazy to silently do that (the ".
+               "\"old\" behavior might after all have been introduced in one ".
+               "of the non-common commits as discussed here: https://mirrors.edge.kernel.org/pub/software/scm/git/docs/git-bisect-lk2009.html".
+               ") $pn doesn't do it, but you can use `git merge-base $obc ".
+               "$nbc' to find a common ancestor to use instead of $obc (i.e. ".
+               "manually do what regular 'git bisect start' does in this ".
+               "situation)";
+
+    # }}}2
+
+    # Ensure dir where we will keep worktrees exists # {{{2
+
+    my $wtd = wtd();
+
+    if ( -e $wtd ) {
+        -d $wtd or confess "'$wtd' exists but is not a directory";
+    }
+    else {
+        -e $wtd or mkdir $wtd
+            or confess "failed to create directory '$wtd': $!";
+    } # }}}2
+
+    # FIXME: Do we want to unwind this on err creating working trees?
+    # If a bisect is already happening will this reliably fail?
+    sysck("git bisect start $pto $pnco $pfpo $nbc $obc -- ".join(' ', @paths));
+
+    # Get list of SHA1s of commits we need trees for # {{{2
+
+    my @cl = trimmed_commit_list($nbc, $obc, $fp, \@paths);
+
+    # }}}2
+
+    # Ensure worktrees exist # {{{2
+    my $use_worktrees = 1;
+    foreach ( @cl ) {
+        my $cp = cwtp($_);   # Commit Path
+        unless ( $use_worktrees ) {
+            die "this code path worked to create the dir at least but hasn't ".
+                "been used for other actions (e.g. cleanupall)";
+            # FIXXME: well pcb doesn't ./autogen.sh correctly from a dir
+            # created this way (though the source reads like it intends to),
+            # and I bet this is pretty common these days, so probably the
+            # worktree way should be the default, and idk if we even want
+            # to suppport this
+            (-d $cp and next)
+                or mkdir $cp or confess "failed to create directory '$cp': $!";
+            # Well this is stupid but I didn't find a better and easy way
+            # to do it.  We could probably safely parallel this but I'm sure
+            # that's not in spec.
+            sysck("(git archive $_ -o $cp/tmp.tar && cd $cp && tar xf tmp.tar)");
+        }
+        else {
+            (-d $cp and next) or sysck("git worktree add --detach $cp $_");
+        }
+    } # }}}2
+
+} # }}}1
+elsif ( $action eq 'runinall' ) { # {{{1
+
+    # Run an instance of a command in each of the commit trees.  The stdout
+    # and stderr of the commands is redirected to log files (unless the user
+    # redirects it somewhere else in their provided command).  A master_log is
+    # also constructed which says what has been done and which jobs succeeded
+    # or failed.
+
+    my $cmd = join(' ', @ARGV);
+
+    # Require an ongoing bisection (which we assume is a $pn :)
+    not system("git bisect log >/dev/null") or exit 1;
+
+    my $wtd = wtd();   # WorkTree Dir
+
+    my @cl = commit_list();   # Commit List
+
+    my @cdp = map { cwtp($_) } @cl;   # Commit Dir Paths
+
+    my $mlf = "$wtd/master_log";   # Master Log File
+
+    # Log Message
+    my $lm = 'About to run command `'.$cmd."' in all ".scalar(@cdp)." commit ".
+             "tree dirs\n";
+    print $lm;
+    open(MLF, ">>$mlf") or die "failed to open $mlf for reading: $!";
+    print MLF $lm;
+    close(MLF) or die "failed to close $mlf: $!";
+
+    # FIXME: make all the regular commands make a master_log entry I guess
+
+    # FIXME: rather than just doc, should the output say where stuff is
+    # being logged?
+
+    my $qec = ($cmd =~ s/'/'"'"'/gr);   # Quote-escaped Command
+
+    # Wrapped Quote-Escaped Command (to be invoked by GNU Parallel).
+    # This puts us in the right dir and does logging
+    my $wqec = "(cd {} && (((($qec) 1>{}.stdout_log 2>{}.stderr_log) && echo command succeeded in {} | tee --append $mlf) || ((echo command failed in {} >>$mlf) && (echo command failed in {} 1>&2) && false)))";
+
+    # Cobble together a decent --memsuspend option to try, iff /proc/meminfo is
+    # available
+    my $mt_kb = mem_total();   # Mem Total in kB
+    my $mvpt = 0.10;   # --memsuspend value percent total
+    my $mv_kb = sprintf "%.0f", $mt_kb * $mvpt;   # --memsuspend value in kB
+    my $mso = ( $mt_kb != -1 ? "--memsuspend=${mv_kb}k": '');
+
+    # Use a temp file and :::: rather than ::: to avoid too long command line:
+    my ($tfh, $tfn) = tempfile();   # Temp File Handle/Name
+    print $tfh join("\n", @cdp) or confess;
+    close $tfh or confess;
+    # Parallel Command
+    my $pc = "parallel --plain --nice=17 --load=80% $mso '$wqec' :::: $tfn";
+    # FIXME: should this log also?  I'm REALLY not sure master_log should exist
+    not system_bash $pc or die "command failed in at least one commit tree";
+    unlink $tfn or confess;
+
+} # }}}1
+elsif ( $action eq 'runinrange' ) { # {{{1
+
+    die "FIXXME: could implement this to run build commands for just a range ".
+        "of commits (so we could bisect across a change in build procedure)";
+
+} # }}}1
+elsif ( $action eq 'runincurrent' ) { # {{{1
+
+    # Run a command in the worktree associated with the commit currently
+    # being tested.  This is presumably a test command of some sort, so
+    # stdout and stderr are not redirected anywhere (and no logging is done).
+
+    # Require an ongoing bisection (which we assume is a $pn :)
+    not system("git bisect log >/dev/null") or die "no bisection in progress";
+
+    my $cmd = join(' ', @ARGV);
+
+    my $od = cwd();   # Old Dir
+
+    # Current Commit SHA1.  First look for BISECT_HEAD which will be present
+    # if we're in a --no-checkout bisection, and if that isn't there assume
+    # we're not in a --no-checkout bisection and look for HEAD.
+    my $ccs = `git rev-parse --verify BISECT_HEAD^{commit}`;
+    if ( $? != 0 ) {
+        $ccs = btck('git rev-parse --verify HEAD^{commit}');
+    }
+    else {
+        chomp($ccs);
+    }
+
+    my $wtp = cwtp($ccs);
+    chdir($wtp) or confess("chdir(\"$wtp\") failed: $!");
+
+    # FIXME: For clarity shouldn't this output/log the same sort of thing
+    # runinall does?  UPDATE The master_log should get an entry but the
+    # actual command output not go anywhere special I think.  This is what
+    # docs currently say.  Assuming we actually want master_log at all?
+
+    # FIXME: this needs to end up quoting like runinall:
+
+    not system_bash $cmd or die "command failed in current commit tree";
+
+    chdir($od) or confess("chdir(\"$od\") failed: $!");
+
+} # }}}1
+elsif ( is_valid_term_action($action) ) { # {{{1
+
+    sysck("git bisect $action ".join(' ', @ARGV));
+
+} # }}}1
+elsif ( $action eq 'terms' ) { # {{{1
+
+    sysck("git bisect terms ".join(' ', @ARGV));
+
+} # }}}
+elsif ( $action eq 'skip' ) { # {{{1
+
+    sysck("git bisect skip ".join(' ', @ARGV));
+
+} # }}}1
+elsif ( $action eq 'reset' ) { # {{{1
+
+    sysck("git bisect reset ".join(' ', @ARGV));
+
+} # }}}1
+elsif ( $action eq 'visualize' or $action eq 'view' ) { # {{{1
+
+    sysck("git bisect visualize ".join(' ', @ARGV));
+
+} # }}}1
+elsif ( $action eq 'replay' ) { # {{{1
+
+    @ARGV == 1 or die "wrong number of arguments for $action";
+
+    my $logfile = $ARGV[0];
+
+    sysck("git bisect replay $logfile");
+
+} # }}}1
+elsif ( $action eq 'log' ) { # {{{1
+
+    @ARGV == 0 or die "wrong number of arguments for $action";
+
+    sysck("git bisect log");
+
+} # }}}1
+elsif ( $action eq 'run' ) { # {{{1
+
+    sysck("git bisect run ".join(' ', @ARGV));
+
+} # }}}1
+elsif ( $action eq 'help' or $action eq '--help' or $action eq '-?' ) { # {{{1
+
+    # FIXXME: add runinrange in here if it gets implemented:
+    print <<"END_TOP_LEVEL_HELP";
+
+    $pn COMMAND [OPTION]...
+
+    COMMAND is one of:
+
+      start
+      runinall
+      runincurrent
+      new
+      old
+      terms
+      skip
+      reset
+      visualize
+      replay
+      log
+      run
+      cleanupall
+      help
+
+    Please see also the markdown for $pn-specific help.  For help with git
+    bisect try `git bisect help' or `man git-bisect'.
+
+END_TOP_LEVEL_HELP
+
+} # }}}1
+elsif ( $action eq 'cleanupall' ) { # {{{1
+
+    # Remove *all* batch-bisect-related worktrees and the worktree directory
+    # and end any current bisection (with git bisect reset).  This should
+    # remove everything even if some other operation failed in the middle.
+    #
+    # FIXXME: There is currently no automatic way to do partial cleanup: either
+    # all the commits and worktrees stay around, or they are nuked en masse
+    # with this action.  Middle policies would of course be possible but are
+    # painful to specify and implement for a since wtd() (probably the most
+    # useful fix would be to implement a -d option to specify worktree to use
+    # other than the default).
+
+    @ARGV == 0 or die "wrong number of arguments for $action";
+
+    my $wtd = wtd();
+
+    # git worklist records the names as absolute paths so get those
+    my $abs_wtd = abs_path($wtd);
+
+    # Worktree List (only our worktrees filtered in)
+    my @wl
+        = map
+            { m/\Q$abs_wtd\E/ ? ($_) : () }
+            split(/\n/, btck("git worktree list | cut -d ' ' -f 1"));
+
+    foreach ( @wl ) { sysck("git worktree remove --force $_"); }
+
+    sysck("rm -rf $wtd");
+
+    sysck("git bisect reset");
+
+} # }}}1
+else { # {{{1
+
+        die "invalid action '$action'";
+
+} # }}}1
+
+# FIXME: the actual way to get all the commits involved might
+# be: git rev-list BAD --not GOOD1 GOOD2... as discussed here:
+# https://mirrors.edge.kernel.org/pub/software/scm/git/docs/git-bisect-lk2009.html
+# The docs show git bisect bad beign used on at most one optional <rev>,
+# while git bisect good can take <rev>...  and that's what the above page
+# shows also, but elsewhere it's no clear you can't mark multiple commits
+# bad at once, check this.  It looks sort of like always using --first-parent
+# might be a reasonable approach, since it would both keep life simpler for us and not build too many bazillions of commits all at once in cases where there have been a lot of merges.  But then again building lots of commits at once is sort of what we're trying to do here.  Hmm. I guess since we're still really letting git bisect do all the work of figuring out what to test all we really need to do is get the rev-list right, which means things might be as simple as allowing multiple good/bad revs to be specified for start
+
+# FIXME: looks like the old and new actions might need to accept rev args,
+# so they can be used on non-current rev like the underlying git bisect
+# subcommands allow
