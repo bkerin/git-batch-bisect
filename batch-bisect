@@ -393,9 +393,7 @@ elsif ( $action eq 'runinall' ) { # {{{1
 
     # Run an instance of a command in each of the commit trees.  The stdout
     # and stderr of the commands is redirected to log files (unless the user
-    # redirects it somewhere else in their provided command).  A master_log is
-    # also constructed which says what has been done and which jobs succeeded
-    # or failed.
+    # redirects it somewhere else in their provided command).
 
     my $cmd = join(' ', @ARGV);
 
@@ -408,17 +406,8 @@ elsif ( $action eq 'runinall' ) { # {{{1
 
     my @cdp = map { cwtp($_) } @cl;   # Commit Dir Paths
 
-    my $mlf = "$wtd/master_log";   # Master Log File
-
-    # Log Message
-    my $lm = 'About to run command `'.$cmd."' in all ".scalar(@cdp)." commit ".
-             "tree dirs\n";
-    print $lm;
-    open(MLF, ">>$mlf") or die "failed to open $mlf for reading: $!";
-    print MLF $lm;
-    close(MLF) or die "failed to close $mlf: $!";
-
-    # FIXME: make all the regular commands make a master_log entry I guess
+    print 'About to run command `'.$cmd."' in all ".scalar(@cdp)." commit ".
+          "tree dirs\n";
 
     # FIXME: rather than just doc, should the output say where stuff is
     # being logged?
@@ -427,7 +416,7 @@ elsif ( $action eq 'runinall' ) { # {{{1
 
     # Wrapped Quote-Escaped Command (to be invoked by GNU Parallel).
     # This puts us in the right dir and does logging
-    my $wqec = "(cd {} && (((($qec) 1>{}.stdout_log 2>{}.stderr_log) && echo command succeeded in {} | tee --append $mlf) || ((echo command failed in {} >>$mlf) && (echo command failed in {} 1>&2) && false)))";
+    my $wqec = "(cd {} && (((($qec) 1>{}.stdout_log 2>{}.stderr_log) && echo command succeeded in {}) || ((echo command failed in {} 1>&2) && false)))";
 
     # Cobble together a decent --memsuspend option to try, iff /proc/meminfo is
     # available
@@ -442,7 +431,6 @@ elsif ( $action eq 'runinall' ) { # {{{1
     close $tfh or confess;
     # Parallel Command
     my $pc = "parallel --plain --nice=17 --load=80% $mso '$wqec' :::: $tfn";
-    # FIXME: should this log also?  I'm REALLY not sure master_log should exist
     not system_bash $pc or die "command failed in at least one commit tree";
     unlink $tfn or confess;
 
@@ -479,11 +467,6 @@ elsif ( $action eq 'runincurrent' ) { # {{{1
 
     my $wtp = cwtp($ccs);
     chdir($wtp) or confess("chdir(\"$wtp\") failed: $!");
-
-    # FIXME: For clarity shouldn't this output/log the same sort of thing
-    # runinall does?  UPDATE The master_log should get an entry but the
-    # actual command output not go anywhere special I think.  This is what
-    # docs currently say.  Assuming we actually want master_log at all?
 
     # FIXME: this needs to end up quoting like runinall:
 

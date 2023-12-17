@@ -75,45 +75,20 @@ a persistant cache of commit builds as usual).
 
 <!-- FIXXME: modify this to cover runinrange if it ever gets added -->
 
-Log files are used for a lot of output.  Log files are clobbered when you would
-expect (e.g. the master_log by `batch-bisect start`, runinall logs for when a
-new logged command is executed, etc.).
-
-### Output of `runinall`
-
-The runinall command prints a summary of what it's doing and the exit status of
-each of the commands on standard output and standard error, and also logs this
-information in a master log file called for example:
-
-```
-/home/my_repo/../my_repo.batch_bisect/master_log
-```
-
-The output of the individual commands run by `ruininall` is not printed, but
-redirected to log files like for example:
+The `runinall` command prints a summary of what it's doing and the exit status
+of each of the commands on standard output and standard error, but the stdout
+and stderr of the commands itself is redirected to log files like for example:
 
 ```
 /home/my_repo/../my_repo.batch_bisect.09f4e248000679ebac8e426a40becd1903e548ac.stderr_log
 /home/my_repo/../my_repo.batch_bisect.09f4e248000679ebac8e426a40becd1903e548ac.stdout_log
 ```
 
-The logic here is `runinall` is generally used for build commands, the output
-of which is probably voluminous and uninteresting except in the case of build
-failure (in which case it's probably most convenient to have the output of the
-individual command isolated).
-
-### Output of `runincurrent`
-
-The `runincurrent` command logs only a summary of what it's going to do to the
-master_log, and leaves the standard output and standard error undisturbed.  The
-logic here is that `runincurrent` is generally used for testing, where the
-output of instrumentation or the actual program under test will likely need to
-be observerd.
-
-### Output of everything else
-
-All the other commands cause a log entry in the `master_log` but the output of
-the underlying `git bisect` commands is undisturbed.
+All the other commands including `runincurrent` leave stdout and stderr
+undisturbed.  The logic is that `runinall` is generally used for build commands
+which often have voluminous output that's only interesting when there's a build
+failure, while `runincurrent` is used for testing where the output of
+instrumentation of the actual program under test needs to be observed.
 
 ## Options
 
@@ -166,6 +141,8 @@ spaces or quotes in them you're in for some fun escaping them so they make it
 into `batch-bisect`, and due to the way `git bisect logs` quotes the stuff
 it remembers (which `batch-bisect` uses) things still might fail later (I
 haven't tried it :)
+
+<!-- FIXME: would be nice to fix the garbage formatting where the first paragraph of a bullet point is not indented but subsequent ones need to be, probably by indending first I guess -->
 
 <!-- FIXXME: modify this to cover runinrange if it ever gets added -->
 - For the runinall, and runincurrent commands, `batch-bisect` aims to behave
