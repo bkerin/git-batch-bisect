@@ -363,12 +363,6 @@ if    ( $action eq 'start' ) { # {{{1
 
     # }}}2
 
-    # FIXME: could turn into a git subcommand:
-    # https://opensource.com/article/22/4/customize-git-subcommands
-
-    # FIXME: find out and doc how to add sub-command and commit completion
-    # Search _git_bisect in https://github.com/git/git/blob/master/contrib/completion/git-completion.bash#L3376 UPDATE: all that's left to do is be sure it really works to put the fragment in .bashrc or source it from there
-
     # FIXME: maybe submit a patch to git-completion.bash updating completion for git bisect to cover the latest subcommands/options
 
     # FIXME: maybe submit patches for the doc issues we've discovered in

@@ -1,7 +1,4 @@
 
-# FIXME: the check in here are ok and this was all set up when we were invoked
-# a batch-bisect but how to make it work as a subcommand is a little different
-
 # vim:filetype=bash
 
 _batch-bisect_check_for_func ()
@@ -61,63 +58,8 @@ then
        __git_complete
   then
 
-       # FIXME: the tripple-commented stuff is the old way we had of doing
-       # things when batch-bisect was not treated as a git command but rather
-       # a stand-alone program.  I'm going to nuke it a seperate commit and add
-       # it to my memmap because it seems usefulish maybe.  _git_batch_bisect
-       # wasn't needed in that world and neither was the final
-       #
-       #   ___git_complete git __git_main
-       #
-       # but otherwise everything that's going to be left was also in
-
-###    _batch-bisect-completer ()
-###    {
-###        __git_has_doubledash && return
-###
-###    	local subcommands="start runinall runincurrent bad good new old terms skip reset visualize replay log run cleanupall help"
-###    	local subcommand="$(__git_find_on_cmdline "$subcommands")"
-###    	if [ -z "$subcommand" ]; then
-###    		__git_find_repo_path
-###    		if [ -f "$__git_repo_path"/BISECT_START ]; then
-###    			__gitcomp "$subcommands"
-###    		else
-###    			__gitcomp "replay start cleanupall help"
-###    		fi
-###    		return
-###    	fi
-###
-###            case "$subcommand" in
-###            start)
-###              case "$cur" in
-###              --*)
-###                local _git_bisect_start_options="--first-parent --no-checkout"
-###                __gitcomp "$_git_bisect_start_options"
-###                return
-###                ;;
-###              *)
-###                ;;
-###              esac
-###              ;;
-###            cleanupall)
-###              case "$cur" in
-###              --*)
-###                __gitcomp "--force"
-###                return
-###                ;;
-###              esac
-###              ;;
-###            esac
-###
-###    	case "$subcommand" in
-###    	bad|good|new|old|reset|skip|start)
-###    		__git_complete_refs
-###    		;;
-###    	*)
-###    		;;
-###    	esac
-###    }
-
+    # This magically named function will get pulled in by git-completion.bash
+    # function
     _git_batch_bisect ()
     {
         __git_has_doubledash && return
@@ -170,17 +112,6 @@ then
     # way to hook in a single additional subcommand
     ___git_complete git __git_main
 
-###    # To show that we're analogous to __git_main from https://github.com/git/git/blob/master/contrib/completion/git-completion.bash at this point
-###    __batch-bisect_main ()
-###    {
-###      _batch-bisect-completer
-###    }
-###
-###    # All this really does is set up the parser/wrapper thingy from https://github.com/git/git/blob/master/contrib/completion/git-completion.bash)
-###    __git_complete batch-bisect __batch-bisect_main
-###
-###    __git_complete git-batch-bisect
-###
   fi
 
 fi
