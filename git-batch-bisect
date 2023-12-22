@@ -24,7 +24,7 @@ use Getopt::Long qw( GetOptions );
 # }}}1
 
 # FIXXME: could do whatever the current magic is to discover our own name here
-my $pn = 'batch-bisect';   # Program Name
+my $pn = 'git-batch-bisect';   # Program Name
 
 sub system_bash ($cmd) { # {{{1 # Like system(), but use /bin/bash not /bin/sh
     my @args = ('/bin/bash', '-c', $cmd);
@@ -88,11 +88,16 @@ sub cwtp ($commit) { # {{{1   Commit WorkTree Path
     return wtd()."/$commit"
 
 } # }}}1
-sub trimmed_commit_list($lc, $fc, $fp, $paths) { # {{{1
+sub trimmed_commit_list($nbc, $obcs, $fp, $paths) { # {{{1
 
-  # Return list of commits between $fc and $lc subject to --first-parent
+  # Return list of commits reachable from $nbc but not from any of @$obcs,
+  # subject to --first-parent and not including $nbc or any of @$obcs
+  # themselves, i.e. "between" @$obcs and $nbc subject to --first-parent.
 
   my $pfpo = ($fp ? '--first-parent' : '');   # Possible --first-parent Option
+
+  # Old Behavior Commits Part
+  my $obcp = join(' ', map { "^$_" } @$obcs);
 
   # Paths Part (as string of paths).  Note that when the [$paths] argument
   # passed to us was obtained by parsing git bisect log output these paths
@@ -100,11 +105,11 @@ sub trimmed_commit_list($lc, $fc, $fp, $paths) { # {{{1
   my $pp = join(' ', @$paths);
 
   # Commit List
-  my @cl = split(/\n/, btck("git rev-list $pfpo $lc ^$fc -- $pp"));
+  my @cl = split(/\n/, btck("git rev-list $pfpo $nbc $obcp -- $pp"));
 
-  # At this point @cl will include $lc which we don't want, so make sure
+  # At this point @cl will include $nbc which we don't want, so make sure
   # we have it's SHA1 ($nbc might be a tag or something here) and remove it
-  my $lc_sha1 = btck("git rev-parse --verify $lc^{commit}");
+  my $lc_sha1 = btck("git rev-parse --verify $nbc^{commit}");
   @cl = map { $_ eq $lc_sha1 ? () : ($_) } @cl;   # Filter out $lc_sha1
 
   return @cl;
@@ -112,10 +117,20 @@ sub trimmed_commit_list($lc, $fc, $fp, $paths) { # {{{1
 } # }}}1
 sub commit_list() { # {{{1
 
-  # Require that a bisection is in progress, and return list of commits in the
-  # current bisection by parsing git bisect log output.
+  # Require that a bisection is in progress, and return list of *all*
+  # the commits in the current bisection (not just the remaining ones)
+  # by parsing git bisect log output.
 
   my $blo = btck("git bisect log");   # Bisect Log Output
+  my @blo = split(/\n/, $blo);   # Bisect Log Output (as array of lines)
+
+  # NOTE: The log parsing below was developed mainly using the log that results
+  # from:
+  #
+  #     bb start master fc7a1fe274a3cd0111ccd882da8043ac39bfeeb0 18071e1457c87879f6493af39bcff46cdf5bc6fc
+  #
+  # in test_repos/with_merged_branch (which I'm planning to ultimately be
+  # stored in tar form so the name may be different).
 
   # FIXXME: I'd rather use --term-old and --term-new here, and git bisect
   # terms supports them but doesn't document that support at the moment so
@@ -123,18 +138,28 @@ sub commit_list() { # {{{1
   my $old_term = btck("git bisect terms --term-good");
   my $new_term = btck("git bisect terms --term-bad");
 
-  # FIXXME: this is probably fragile and it might be better to look in
-  # ./.git/refs/bisect or something
-  #
-  # First and second lines are the initial old/new commits
-  my ($bl1, $bl2) = (split(/\n/, $blo))[0,1];   # $blo line 1/2
+  # First line describes the bad (new) commit
+  my $bl1 = shift(@blo);
   my $mcc = 27;   # I think commits as showin in log are always >this long
   $bl1 =~ m/^# \Q$new_term\E: \[([a-f0-9]{$mcc,})\]\s+.*$/m
       or confess "unexpected match failure";
-  my $lc = $1;   # Last Commit
-  $bl2 =~ m/^# \Q$old_term\E: \[([a-f0-9]{$mcc,})\]\s+.*$/m
-      or confess "unexpected match failure";
-  my $fc = $1;   # First Commit
+  my $nbc = $1;
+
+  # Next should be one or more lines describing initial good (old) commits
+  # (these should be ended by the line recording the git bisect start command).
+  my @obc = ();
+  while ( $blo[0] =~ m/^# \Q$old_term\E: \[([a-f0-9]{$mcc,})\]\s+.*$/m ) {
+      push(@obc, $1);
+      shift @blo;
+  }
+  @obc >= 1
+      or confess "didn't find >= 1 lines describing initial good commit(s)";
+
+  # FIXXME: subsequent good/bad actions end up adding more lines like
+  # the above to the log, below the line containing the copy of the git
+  # bisect start command.  So it would probably be pretty easy to make a
+  # 'runinremaining' command that would happen in all as-yet-unbisected
+  # commits.  But I don't know if there's any point.
 
   $blo =~ m/^git bisect start (.*)$/m or confess "unexpected match failure";
   my $bsoaa = $1;   # Bisect Start Opts And Args
@@ -144,7 +169,7 @@ sub commit_list() { # {{{1
   # Paths arguments (if any) as an array
   my @paths = split(' ', ($bsoaa =~ m/'--'\s+([^\s].*)$/ ? $1 : ''));
 
-  my @cl = trimmed_commit_list($lc, $fc, $fp, \@paths);
+  my @cl = trimmed_commit_list($nbc, \@obc, $fp, \@paths);
 
   return @cl;
 
@@ -169,7 +194,7 @@ sub usage ($action, $opts, $args) # {{{1
 {
     return(
         "\n  $pn $action usage:\n\n  $0\n    ".
-        join("\n    ", @{opt_descriptions($opts)})."\n    $args\n\n" );
+        join("\n    ", @{opt_descriptions($opts)}).($args ? "\n    $args" : '')."\n\n" );
 } # }}}1
 sub cnoa ($avr, $relation, $count, $action) { # Check Number Of Arguments {{{1
 
@@ -319,26 +344,40 @@ if    ( $action eq 'start' ) { # {{{1
         # up front.
         die "\n".
             "too few non-<path> arguments to $pn start subcommand.  Unlike ".
-            "git bisect start, batch-bisect start requires that a bad commit ".
-            "and at least one good commit be provided to the start command.\n".
+            "`git bisect start', `git batch-bisect start' requires that a ".
+            "bad commit and at least one good commit be provided to the ".
+            "start command.\n".
             usage($action,\%opts, '<bad> <good>... [--] [<path>...]');
     }
 
     # Note that we already remove any <path>s arguments above (and GetOptions()
     # remove any '--' arguments)
-    my ($nbc, $obc) = @ARGV;   # New/Old Behavior Commit
+    my ($nbc, @obc) = @ARGV;   # New Behavior Commit/Old Behavior Commit(s)
 
     not system("git rev-parse --quiet --verify $nbc^{commit} >/dev/null")
         or die "`$nbc' doesn't look like a commit";
-    not system("git rev-parse --quiet --verify $obc^{commit} >/dev/null")
-        or die "`$obc' doesn't look like a commit";
+    foreach ( @obc ) {
+        not system("git rev-parse --quiet --verify $_^{commit} >/dev/null")
+            or die "`$_' doesn't look like a commit";
+    }
 
     # }}}2
 
-    # Check that $obc-$nbc relationship is sane {{{2
+    # FIXME: could turn into a git subcommand:
+    # https://opensource.com/article/22/4/customize-git-subcommands
+
+    # FIXME: find out and doc how to add sub-command and commit completion
+    # Search _git_bisect in https://github.com/git/git/blob/master/contrib/completion/git-completion.bash#L3376 UPDATE: all that's left to do is be sure it really works to put the fragment in .bashrc or source it from there
+
+    # FIXME: maybe submit a patch to git-completion.bash updating completion for git bisect to cover the latest subcommands/options
+
+    # FIXME: maybe submit patches for the doc issues we've discovered in
+    # git-bisect that didn't look like they got corrected on the mailing list
+
+    # Check that @obc-$nbc relationship is sane {{{2
 
     # As of this writing (2023-12-17) git gives this crap message when $nbc is
-    # an ancestor of $obc:
+    # an ancestor of an @obc:
     #
     #    $ git bisect start oldest_commit newest_commit
     #    Some good revs are not ancestors of the bad rev.
@@ -352,83 +391,56 @@ if    ( $action eq 'start' ) { # {{{1
     # in fact introduced on the branch with it's subsequent messaging).  So
     # here we give a message describing the actual problem.
     #
-    not is_ancestor($nbc, $obc)
-        or die "bad (new behavior) commit `$nbc' is an ancestor of good (old ".
-               "behavior) commit `$obc'.  Maybe you got the good/bad ".
-               "(old/new) commits swapped?";
+    foreach my $obc ( @obc ) {
 
-    if ( not is_ancestor($obc, $nbc) ) {
+        not is_ancestor($nbc, $obc)
+            or die "bad (new behavior) commit `$nbc' is an ancestor of good ".
+                   "(old behavior) commit `$obc'.  Maybe you got the ".
+                   "good/bad (old/new) commits swapped?";
 
-        # Common Ancestor-Finding Command
-        my $cafc = "git merge-base $obc $nbc";
+        if ( not is_ancestor($obc, $nbc) ) {
 
-        # I'm not sure when this would happen but for caution let's trap it
-        not system("$cafc 1>/dev/null 2>/dev/null")
-            or confess "commit `$obc' is not an ancestor of `$nbc' or vice ".
-                       "versa and `git merge-base $obc $nbc' failed to find ".
-                       "common ancestor";
+            # Common Ancestor-Finding Command
+            my $cafc = "git merge-base $obc $nbc";
 
-        # FIXME: WORK POINT: ok in our with_unmerged_branch I currently see
-        # this behavior:
-        #
-        #     $ git bisect start master unmerged_test_branch 32d0cd24973d35ad97bdc747ac29f21b06f18bce
-        #     Bisecting: a merge base must be tested
-        #     [b93212577c2e8603ed7285b55a0931dcf552c628] I'm yet another test commit
-        #     $ git bisect bad
-        #     The merge base b93212577c2e8603ed7285b55a0931dcf552c628 is bad.
-        #     This means the bug has been fixed between b93212577c2e8603ed7285b55a0931dcf552c628 and [1b4470e66cb26244be9aa5f68cca042a0ef4270e 32d0cd24973d35ad97bdc747ac29f21b06f18bce].
-        #
-        # See the gitk also, that report seems to be saying the bug is fixed by going back in time from the merge point, or forward in time on the branch.
-        # Yikes.  Multiple <good> marks with merge base testing is implemented
-        # so I guess probably somebody is using it in some non-redundant way
-        # but I think I'm not interested and will just keep on having
-        # batch-bisect advise the user to use merge-base manually when it runs
-        # into this stuff.
-        #
-        # But this behavior in with_merged_branch looks more useful:
-        #
-        #     $ git bisect start master fc7a1fe274a3cd0111ccd882da8043ac39bfeeb0 18071e1457c87879f6493af39bcff46cdf5bc6fc
-        #     Bisecting: 4 revisions left to test after this (roughly 2 steps)
-        #     [443d45cca04ae3ab9af44985dab476e3a145db77] Yet another test commit on a test branch
-        #     ---------------------------------------------------------------------------
-        #     $ git bisect good
-        #     Bisecting: 2 revisions left to test after this (roughly 1 step)
-        #     [fd6cee3792048661c126af58f228b4abaabd6b1b] Yet another commit on master after test branch
-        #     ---------------------------------------------------------------------------
-        #     $ git bisect bad
-        #     Bisecting: 0 revisions left to test after this (roughly 0 steps)
-        #     [65a03b0db813b6a6164f3ddc97d5a12590273e71] Another commit on master after test branch
-        #     ---------------------------------------------------------------------------
-        #     $ git bisect bad
-        #     65a03b0db813b6a6164f3ddc97d5a12590273e71 is the first bad commit
-        #     commit 65a03b0db813b6a6164f3ddc97d5a12590273e71
-        #     Author: Britton Leo Kerin <britton.kerin@gmail.com>
-        #     Date:   Sun Dec 3 09:33:31 2023 -0900
-        #
-        #         Another commit on master after test branch
-        #
-        #      file_a | 1 +
-        #      1 file changed, 1 insertion(+)
-        #     ---------------------------------------------------------------------------
-        #
-        # Here the multiple <good> markes on the different merges brances have
-        # saved us some testing.  I guess to implement this <good> essentially
-        # has to turn into an array.  git bisect log records all the goods,
-        # so things that look at that might need to change.  I'm not sure how
-        # much more hassle getting the full set of revs would be but I think
-        # rev-list can do it pretty easily.
+            # I'm not sure when this would happen but for caution let's trap it
+            not system("$cafc 1>/dev/null 2>/dev/null")
+                or confess "commit `$obc' is not an ancestor of `$nbc' or ".
+                           "vice versa and `git merge-base $obc $nbc' failed ".
+                           "to find a common ancestor";
 
-        die "$obc isn't an ancestor of $nbc.  In this situation git ".
-           "bisect normally automagically selects a common ancestor for ".
-           "the starting point.  Partly for implementation reasons and ".
-           "partly because it's potentially confuing to do that (the \"old\" ".
-           "behavior might after all have been introduced in one of the ".
-           "non-common commits as discussed here: ".
-           "https://mirrors.edge.kernel.org/pub/software/scm/git/docs/git-bisect-lk2009.html".
-           ") $pn doesn't do it, but you can use `$cafc' to find a common ".
-           "ancestor to use instead of $obc (i.e. manually do what regular ".
-           "`git bisect start' does in this situation)";
+            # Regarding automagical selection of common ancestor commits as
+            # a starting point, in particular in combination with multiple
+            # <good> commits, in with_unmerged branch test repo I currently
+            # see this behavior:
+            #
+            #     $ git bisect start master unmerged_test_branch 32d0cd24973d35ad97bdc747ac29f21b06f18bce
+            #     Bisecting: a merge base must be tested
+            #     [b93212577c2e8603ed7285b55a0931dcf552c628] I'm yet another test commit
+            #     $ git bisect bad
+            #     The merge base b93212577c2e8603ed7285b55a0931dcf552c628 is bad.
+            #     This means the bug has been fixed between b93212577c2e8603ed7285b55a0931dcf552c628 and [1b4470e66cb26244be9aa5f68cca042a0ef4270e 32d0cd24973d35ad97bdc747ac29f21b06f18bce].
+            #
+            # See the gitk also, that report seems to be saying the bug is
+            # fixed by going back in time from the merge point, or forward
+            # in time on the branch.  Yikes.  Multiple <good> marks with
+            # merge base testing is implemented so I guess probably somebody is
+            # using it in some non-redundant way but I think I'm not interested
+            # and will just keep on having batch-bisect advise the user to use
+            # merge-base manually when it runs into this stuff.
 
+            die "$obc isn't an ancestor of $nbc.  In this situation git ".
+                "bisect normally automagically selects a common ancestor for ".
+                "the starting point.  Partly for implementation reasons and ".
+                "partly because it's potentially confuing to do that (the ".
+                "\"old\" behavior might after all have been introduced in ".
+                "one of the non-common commits as discussed here: ".
+                "https://mirrors.edge.kernel.org/pub/software/scm/git/docs/git-bisect-lk2009.html".
+                ") $pn doesn't do it, but you can use `$cafc' to find a ".
+                "common ancestor to use instead of $obc (i.e. manually do ".
+                "what regular `git bisect start' does in this situation)";
+
+        }
     }
 
     # }}}2
@@ -454,9 +466,13 @@ if    ( $action eq 'start' ) { # {{{1
     # FIXXME: currently we make no attempt to unwind this on err creating
     # working trees below.  But I think all those fails are pretty much bugs
     # (or maybe out of disk space :)
-    sysck("git bisect start $pto $pnco $pfpo $nbc $obc -- ".join(' ', @paths));
+    sysck("git bisect start ".
+          "$pto $pnco $pfpo $nbc ".
+          join(' ', @obc).
+          " -- ".
+          join(' ', @paths));
 
-    my @cl = trimmed_commit_list($nbc, $obc, $fp, \@paths);
+    my @cl = trimmed_commit_list($nbc, \@obc, $fp, \@paths);
 
     # Ensure worktrees exist # {{{2
     my $use_worktrees = 1;
@@ -492,7 +508,8 @@ elsif ( $action eq 'runinall' ) { # {{{1
     my $cmd = join(' ', @ARGV);
 
     # Require an ongoing bisection (which we assume is a $pn :)
-    not system("git bisect log >/dev/null") or exit 1;
+    not system("git bisect log >/dev/null")
+        or die "no bisection in progress\n";
 
     my $wtd = wtd();   # WorkTree Dir
 
@@ -506,7 +523,7 @@ elsif ( $action eq 'runinall' ) { # {{{1
     # FIXME: rather than just doc, should the output say where stuff is
     # being logged?
 
-    my $qec = ($cmd =~ s/'/'"'"'/gr);   # Quote-escaped Command
+    my $qec = ($cmd =~ s/'/'"'"'/gr);   # Quote-Escaped Command
 
     # Wrapped Quote-Escaped Command (to be invoked by GNU Parallel).
     # This puts us in the right dir and does logging
@@ -542,7 +559,8 @@ elsif ( $action eq 'runincurrent' ) { # {{{1
     # stdout and stderr are not redirected anywhere (and no logging is done).
 
     # Require an ongoing bisection (which we assume is a $pn :)
-    not system("git bisect log >/dev/null") or die "no bisection in progress";
+    not system("git bisect log >/dev/null")
+        or die "no bisection in progress\n";
 
     my $cmd = join(' ', @ARGV);
 
@@ -656,9 +674,40 @@ elsif ( $action eq 'cleanupall' ) { # {{{1
     # useful fix would be to implement a -d option to specify worktree to use
     # other than the default).
 
-    @ARGV == 0 or die "wrong number of arguments for $action";
+    # Option and argument parsing {{{2
+
+    my $force = 0;
+    my $hf    = 0;
+    my %opts = (
+        "force"  => \$force,
+        "help|?" => \$hf );
+
+    GetOptions(%opts)
+        or die "\nError parsing options.  Try `$pn $action --help'.\n";
+
+    if ( $hf ) {
+        print usage($action, \%opts, '[<commit>]');
+        exit(0)
+    }
+
+    @ARGV == 0 or @ARGV == 1 or die "wrong number of arguments for $action";
+
+    # }}}2
 
     my $wtd = wtd();
+
+    # NOTE --force is an undocumenbted option at this point, since all it's
+    # really good for cleaning up both regular git bisections (started with
+    # `git bisect start') and batch-bisects.  But if something goes haywaire
+    # it could be useful for cleaning up worktree fallout, so maybe it should
+    # get documented (though I hate the clutter).
+
+    unless ( $force ) {
+        -d $wtd
+            or die "`$wtd' doesn't exist or isn't a directory, probably no ".
+                   "$pn is in progress.  Use `$pn cleanupall --force' to try ".
+                   "to clean up worktrees and reset bisection anyway.\n";
+    }
 
     # git worklist records the names as absolute paths so get those
     my $abs_wtd = abs_path($wtd);
@@ -673,7 +722,7 @@ elsif ( $action eq 'cleanupall' ) { # {{{1
 
     sysck("rm -rf $wtd");
 
-    sysck("git bisect reset");
+    sysck("git bisect reset ".join(' ', @ARGV));
 
 } # }}}1
 else { # {{{1
