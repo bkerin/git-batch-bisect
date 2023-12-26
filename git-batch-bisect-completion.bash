@@ -80,7 +80,7 @@ then
             start)
               case "$cur" in
               --*)
-                local _git_bisect_start_options="--first-parent --no-checkout"
+                local _git_bisect_start_options="--term-new --term-bad --term-old --term-good --first-parent --no-checkout"
                 __gitcomp "$_git_bisect_start_options"
                 return
                 ;;
@@ -99,7 +99,7 @@ then
             esac
 
     	case "$subcommand" in
-    	bad|good|new|old|reset|skip|start)
+    	bad|cleanupall|good|new|old|reset|skip|start)
     		__git_complete_refs
     		;;
     	*)
