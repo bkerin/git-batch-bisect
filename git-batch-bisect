@@ -192,9 +192,12 @@ sub opt_descriptions ($opts) { # {{{1
 } # }}}1
 sub usage ($action, $opts, $args) # {{{1
 {
+    # Command Part of Program Name
+    my $cppn = ($pn =~ s/^git-//r);
+
     return(
-        "\n  $pn $action usage:\n\n  $0\n    ".
-        join("\n    ", @{opt_descriptions($opts)}).($args ? "\n    $args" : '')."\n\n" );
+        "usage: git $cppn $action $args\n\n    ".
+        join("\n    ", @{opt_descriptions($opts)})."\n\n" );
 } # }}}1
 sub cnoa ($avr, $relation, $count, $action) { # Check Number Of Arguments {{{1
 
@@ -323,7 +326,11 @@ if    ( $action eq 'start' ) { # {{{1
         or die "\nError parsing options.  Try `$pn $action --help'.\n";
 
     if ( $hf ) {
-        print usage($action, \%opts, '<bad> <good>... [--] [<path>...]');
+        print
+            usage(
+                $action,
+                \%opts,
+                '[<options>] <bad> <good>... [--] [<path>...]' );
         exit(0)
     }
 
@@ -347,7 +354,10 @@ if    ( $action eq 'start' ) { # {{{1
             "`git bisect start', `git batch-bisect start' requires that a ".
             "bad commit and at least one good commit be provided to the ".
             "start command.\n".
-            usage($action,\%opts, '<bad> <good>... [--] [<path>...]');
+            usage(
+                $action,
+                \%opts,
+                '[<options>] <bad> <good>... [--] [<path>...]' );
     }
 
     # Note that we already remove any <path>s arguments above (and GetOptions()
@@ -363,8 +373,8 @@ if    ( $action eq 'start' ) { # {{{1
 
     # }}}2
 
+    # UPDATE: the first (tiny) series for the plural fix is in /home/bkerin/tmp/repos/git/Documentation/deplural_patch
     # FIXME: maybe submit a patch to git-completion.bash updating completion for git bisect to cover the latest subcommands/options
-
     # FIXME: maybe submit patches for the doc issues we've discovered in
     # git-bisect that didn't look like they got corrected on the mailing list
 
@@ -512,10 +522,7 @@ elsif ( $action eq 'runinall' ) { # {{{1
     my @cdp = map { cwtp($_) } @cl;   # Commit Dir Paths
 
     print 'About to run command `'.$cmd."' in all ".scalar(@cdp)." commit ".
-          "tree dirs\n";
-
-    # FIXME: rather than just doc, should the output say where stuff is
-    # being logged?
+          "tree dirs (logging stdout and stderr in files in $wtd)\n";
 
     my $qec = ($cmd =~ s/'/'"'"'/gr);   # Quote-Escaped Command
 
@@ -625,7 +632,11 @@ elsif ( $action eq 'run' ) { # {{{1
     sysck("git bisect run ".join(' ', @ARGV));
 
 } # }}}1
-elsif ( $action eq 'help' or $action eq '--help' or $action eq '-?' ) { # {{{1
+# FIXXME: We have --help here but unfortunately it looks like
+# `git batch-bisect --help get intercepted by git itself and tries to open the
+# man page for git-batch-bisect, which at the moment we don't create.  I don't
+# think it's worth making a man page and full installer over this issue.
+elsif ( $action =~ m/^(?:help|--help|-\?|-h)$/ ) { # {{{1
 
     # FIXXME: add runinrange in here if it gets implemented:
     print <<"END_TOP_LEVEL_HELP";
@@ -680,7 +691,7 @@ elsif ( $action eq 'cleanupall' ) { # {{{1
         or die "\nError parsing options.  Try `$pn $action --help'.\n";
 
     if ( $hf ) {
-        print usage($action, \%opts, '[<commit>]');
+        print usage($action, \%opts, '[<options>] [<commit>]');
         exit(0)
     }
 
