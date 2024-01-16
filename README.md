@@ -7,7 +7,7 @@ wait for a build between tests or create/change/build in/delete directories
 manually).
 
 The built commits persist until their removal is explicitly requested and will
-be re-used by subsequent bisections.
+be reused by subsequent bisections.
 
 ## Installation
 
@@ -75,7 +75,7 @@ a persistant cache of commit builds as usual).
 
 Ensure that bash-completion and git-completion.bash are operational (they
 usually are) and put the contents of `git-batch-bisect-completion.bash` in your
-`~/.bashrc ` or `source` it from somewhere.
+`~/.bash_completion ` or `source` it from somewhere.
 
 To make completion work for a function (or alias) do something like this:
 
@@ -195,7 +195,7 @@ without aliases etc.) in each of the commit directories.  So this works:
 
 - Add a --cache-dir or something like that to control where the commit trees
 go.  This would be the easist way to support maintaining caches with different
-build configurations.
+build configurations.  Of course the user can get something like this by putting a copy of the entire repo in a dir with a different name but that's sort of clunky.  This should probably get an env variable also since the command line arg would need to be given to every command.  Usual prio of command_line > env > default.
 
 - Support automagical common ancestor selection like what native git-bisect
 does (instead of the suggestion to run `git merge-base` manually to find the
