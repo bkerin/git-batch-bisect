@@ -115,6 +115,8 @@ sub trimmed_commit_list($nbc, $obcs, $fp, $paths) { # {{{1
   return @cl;
 
 } # }}}1
+my $sha1_mcc = 27;   # SHA1 Minimum Char Count.  I think they're always >=this
+my $sha1_rgx = "[0-9a-f]{$sha1_mcc,}";   # SHA1 regex
 sub commit_list() { # {{{1
 
   # Require that a bisection is in progress, and return list of *all*
@@ -132,23 +134,72 @@ sub commit_list() { # {{{1
   # in test_repos/with_merged_branch (which I'm planning to ultimately be
   # stored in tar form so the name may be different).
 
+  # FIXME: NOT THIS PROGRAM: we've been poking directly into COMPREPLY,
+  # but maybe we should have been using __gitcomp_nl __gitcomp_file_direct
+  # __gitcomp_file __gitcomp_nl_append __gitcomp_direct __gitcomp_add or
+  # got knows exactly what from that type of wrapper that's already in there
+
+  # FIXME: NOT THIS PROGRAM: Add dir completion for: git-apply
+
+  # FIXME: NOT THIS PROGRAM: looks like __git() should be used from the
+  # if [ -n "${__git_C_args-}" ]; then clause in __git_find_repo_path ()
+  # as a factor.  The only real difference is: git "${__git_C_args[@]}" vs
+  # ${__git_C_args:+"${__git_C_args[@]}"} in __git() (the latter of which
+  # is just nonsense that should be replaced with the former
+
+  # FIXME: git-bisect bug: git bisect visualize --stat oldest_commit doesn't
+  # complain, but I think the oldest_commit argument is just ignored.
+  # With git log --stat oldest_commit the list is much shorter than without
+  # oldest_commit.  This is because there's a --bisect option to git-log which
+  # git-bisect uses that locks the history to the current bisection region.
+  # Since git-bisect knows the arg is going to be ignored in this case it
+  # should give an error if it's given.  Interesting to note that git log
+  # uses -- to seperate the range argument from path arguments, rather than
+  # to denote the end of options as usual, ug.  Really git-log should error
+  # on this case as well.
+
+  # FIXME: git-log shows <path> in synopsis, does it really mean <pathspec>?
+  # If so it's probably bad that git bisect visualize -- some_prefix ends
+  # up completing some_prefix as an actual path
+
+  # FIXME: WORK POINT: for fun and learning retry the recent rebase with
+  # zdiff3 rather than diff3
+
+  # FIXME: both git-checkout and git-switch have --ignore-other-worktrees
+  # which docs say let them work even when another worktree is on the
+  # desired <rev>, which makes me wonder how things are even working at the
+  # moment when --no-checkout is not used since the underlying git bisect
+  # good/bad must trigger checkouts... I guess maybe git-bisect is using
+  # --ignore-other-worktrees internally?
+  # FIXME: In any case the existence of the worktrees on all the other
+  # commits likely means git-checkout of revs in the cache won't work without
+  # --ignore-other-worktrees, which is really sad... does it maybe still
+  # work for named revs, or will any rev that resolves to the same sha1 fail?
+  # At the least this issue should be investigated/documented.  Hopefully
+  # at least using --ignore-other-worktrees in the main repo is safe as long
+  # as changes aren't being done in them.  The docs don't give any indication
+  # of what the risks from doing --ignore-other-worktrees are
+
   # FIXXME: I'd rather use --term-old and --term-new here, and git bisect
   # terms supports them but doesn't document that support at the moment so
   # I'm staying iwth good/bad for now
+  # FIXXME: would it be better to look in .git/BISECT_TERMS, where these are
+  # stored?  It might be less likely to change, but then again these generate
+  # just a single word of output and seem pretty --procelain-esque
   my $old_term = btck("git bisect terms --term-good");
   my $new_term = btck("git bisect terms --term-bad");
 
   # First line describes the bad (new) commit
   my $bl1 = shift(@blo);
   my $mcc = 27;   # I think commits as showin in log are always >this long
-  $bl1 =~ m/^# \Q$new_term\E: \[([a-f0-9]{$mcc,})\]\s+.*$/m
+  $bl1 =~ m/^# \Q$new_term\E: \[($sha1_rgx)\]\s+.*$/m
       or confess "unexpected match failure";
   my $nbc = $1;
 
   # Next should be one or more lines describing initial good (old) commits
   # (these should be ended by the line recording the git bisect start command).
   my @obc = ();
-  while ( $blo[0] =~ m/^# \Q$old_term\E: \[([a-f0-9]{$mcc,})\]\s+.*$/m ) {
+  while ( $blo[0] =~ m/^# \Q$old_term\E: \[($sha1_rgx)\]\s+.*$/m ) {
       push(@obc, $1);
       shift @blo;
   }
@@ -173,6 +224,28 @@ sub commit_list() { # {{{1
 
   return @cl;
 
+} # }}}1
+sub worktree_list ($abs_wtd) { # {{{1
+
+    # Return list of all worktree names of the form ${abs_wtd}<sha1>
+
+    # git worktree list Output Lines
+    # FIXXME: the git-worktree docs suggest using -z with --porcelain so the
+    # output can be parsed when a worktree path contains a newline, but we
+    # haven't considered making that work anywhere else anyway.
+    my @gwlol = split("\n", btck("git worktree list --porcelain"));
+
+    # FIXXME: at this point @gwlol contains lines describing the HEAD
+    # position of each work tree, in theory we could be using this to check
+    # if the has made commits in there to support refusal to operate (in our
+    # worktree-removing caller) if they have.  But in theory such commits
+    # should show up elsewhere, and if we do that we should be checking for
+    # cleanliness of those working trees as well.
+
+    my @result
+        = map { m/^worktree (\Q$abs_wtd\E\/$sha1_rgx)$/ ? ($1) : () } @gwlol;
+
+    return @result;
 } # }}}1
 sub opt_descriptions ($opts) { # {{{1
 
@@ -703,7 +776,7 @@ elsif ( $action eq 'cleanupall' ) { # {{{1
 
     # NOTE --force is an undocumenbted option at this point, since all it's
     # really good for cleaning up both regular git bisections (started with
-    # `git bisect start') and batch-bisects.  But if something goes haywaire
+    # `git bisect start') and batch-bisects.  But if something goes haywire
     # it could be useful for cleaning up worktree fallout, so maybe it should
     # get documented (though I hate the clutter).
 
@@ -717,13 +790,9 @@ elsif ( $action eq 'cleanupall' ) { # {{{1
     # git worklist records the names as absolute paths so get those
     my $abs_wtd = abs_path($wtd);
 
-    # Worktree List (only our worktrees filtered in)
-    my @wl
-        = map
-            { m/\Q$abs_wtd\E/ ? ($_) : () }
-            split(/\n/, btck("git worktree list | cut -d ' ' -f 1"));
-
-    foreach ( @wl ) { sysck("git worktree remove --force $_"); }
+    foreach ( worktree_list($abs_wtd) ) {
+        sysck("git worktree remove --force $_");
+    }
 
     sysck("rm -rf $wtd");
 
