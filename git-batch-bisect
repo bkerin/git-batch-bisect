@@ -134,52 +134,6 @@ sub commit_list() { # {{{1
   # in test_repos/with_merged_branch (which I'm planning to ultimately be
   # stored in tar form so the name may be different).
 
-  # FIXME: NOT THIS PROGRAM: we've been poking directly into COMPREPLY,
-  # but maybe we should have been using __gitcomp_nl __gitcomp_file_direct
-  # __gitcomp_file __gitcomp_nl_append __gitcomp_direct __gitcomp_add or
-  # got knows exactly what from that type of wrapper that's already in there
-
-  # FIXME: NOT THIS PROGRAM: Add dir completion for: git-apply
-
-  # FIXME: NOT THIS PROGRAM: looks like __git() should be used from the
-  # if [ -n "${__git_C_args-}" ]; then clause in __git_find_repo_path ()
-  # as a factor.  The only real difference is: git "${__git_C_args[@]}" vs
-  # ${__git_C_args:+"${__git_C_args[@]}"} in __git() (the latter of which
-  # is just nonsense that should be replaced with the former
-
-  # FIXME: git-bisect bug: git bisect visualize --stat oldest_commit doesn't
-  # complain, but I think the oldest_commit argument is just ignored.
-  # With git log --stat oldest_commit the list is much shorter than without
-  # oldest_commit.  This is because there's a --bisect option to git-log which
-  # git-bisect uses that locks the history to the current bisection region.
-  # Since git-bisect knows the arg is going to be ignored in this case it
-  # should give an error if it's given.  Interesting to note that git log
-  # uses -- to seperate the range argument from path arguments, rather than
-  # to denote the end of options as usual, ug.  Really git-log should error
-  # on this case as well.
-
-  # FIXME: git-log shows <path> in synopsis, does it really mean <pathspec>?
-  # If so it's probably bad that git bisect visualize -- some_prefix ends
-  # up completing some_prefix as an actual path
-
-  # FIXME: WORK POINT: for fun and learning retry the recent rebase with
-  # zdiff3 rather than diff3
-
-  # FIXME: both git-checkout and git-switch have --ignore-other-worktrees
-  # which docs say let them work even when another worktree is on the
-  # desired <rev>, which makes me wonder how things are even working at the
-  # moment when --no-checkout is not used since the underlying git bisect
-  # good/bad must trigger checkouts... I guess maybe git-bisect is using
-  # --ignore-other-worktrees internally?
-  # FIXME: In any case the existence of the worktrees on all the other
-  # commits likely means git-checkout of revs in the cache won't work without
-  # --ignore-other-worktrees, which is really sad... does it maybe still
-  # work for named revs, or will any rev that resolves to the same sha1 fail?
-  # At the least this issue should be investigated/documented.  Hopefully
-  # at least using --ignore-other-worktrees in the main repo is safe as long
-  # as changes aren't being done in them.  The docs don't give any indication
-  # of what the risks from doing --ignore-other-worktrees are
-
   # FIXXME: I'd rather use --term-old and --term-new here, and git bisect
   # terms supports them but doesn't document that support at the moment so
   # I'm staying iwth good/bad for now
@@ -447,9 +401,6 @@ if    ( $action eq 'start' ) { # {{{1
     # }}}2
 
     # UPDATE: the first (tiny) series for the plural fix is in /home/bkerin/tmp/repos/git/Documentation/deplural_patch
-    # FIXME: maybe submit a patch to git-completion.bash updating completion for git bisect to cover the latest subcommands/options
-    # FIXME: maybe submit patches for the doc issues we've discovered in
-    # git-bisect that didn't look like they got corrected on the mailing list
 
     # Check that @obc-$nbc relationship is sane {{{2
 
@@ -571,6 +522,14 @@ if    ( $action eq 'start' ) { # {{{1
             sysck("(git archive $_ -o $cp/tmp.tar && cd $cp && tar xf tmp.tar)");
         }
         else {
+            # NOTE: As of this writing the worktree gets a checkout in
+            # detached HEAD state due to being checked out by SHA1 rather
+            # than by branch name, but we use --detach to be sure because git
+            # worktree won't allow multiple worktrees to point to the same
+            # 'ref' (per documentation for --ignore-other-worktrees in the
+            # git-checkout and git-switch man pages).  It would be pretty
+            # confusing if the user couldn't check out random commits due
+            # to batch-bisect being in progress.
             (-d $cp and next) or sysck("git worktree add --detach $cp $_");
         }
     } # }}}2
