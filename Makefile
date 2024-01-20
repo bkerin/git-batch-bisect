@@ -13,3 +13,12 @@ view_readme_locally:
           (echo grip failed, maybe a running copy needs to be killed? 1>&2) \
         )                                                                   \
         &
+
+# Because there's no reason to complicate matters with a repo-within-repo
+test_repos.unpacked_stamp: test_repos.tar.xz
+	tar xJvf $<
+	touch $@
+
+.PHONY: clean
+clean:
+	rm test_repos.unpacked_stamp
