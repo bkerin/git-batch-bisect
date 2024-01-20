@@ -334,7 +334,7 @@ if    ( $action eq 'start' ) { # {{{1
         "term-good=s"        => \$tg );
 
     # git bisect interprets '--' differently than GetOptions() of
-    # Getopt::Long: the former requires it to seperate [<bad> [<good>]]
+    # Getopt::Long: the former requires it to separate [<bad> [<good>]]
     # rev arguments from <path> arguments, while GetOptions() considers it
     # to indicate that all the following arguments are not to be considered
     # options (regardless of any leading '-' or '--') and filters it out
@@ -399,8 +399,6 @@ if    ( $action eq 'start' ) { # {{{1
     }
 
     # }}}2
-
-    # UPDATE: the first (tiny) series for the plural fix is in /home/bkerin/tmp/repos/git/Documentation/deplural_patch
 
     # Check that @obc-$nbc relationship is sane {{{2
 
@@ -487,7 +485,7 @@ if    ( $action eq 'start' ) { # {{{1
 
     # The underlying git bisect start command tolerates invocation when
     # bisection is already in progress but FIXXME: I don't know why and
-    # don't feel like figuring it out and decided what batch-bisect should do
+    # don't feel like figuring it out and deciding what batch-bisect should do
     system_bash("git bisect log &>/dev/null")
         or die "bisection (possibly batch-bisection) already in progress\n";
 
@@ -704,12 +702,12 @@ elsif ( $action eq 'cleanupall' ) { # {{{1
     # and end any current bisection (with git bisect reset).  This should
     # remove everything even if some other operation failed in the middle.
     #
-    # FIXXME: There is currently no automatic way to do partial cleanup: either
-    # all the commits and worktrees stay around, or they are nuked en masse
-    # with this action.  Middle policies would of course be possible but are
-    # painful to specify and implement for a since wtd() (probably the most
-    # useful fix would be to implement a -d option to specify worktree to use
-    # other than the default).
+    # FIXXME: There is currently no automatic way to do partial cleanup:
+    # either all the commits and worktrees stay around, or they are nuked en
+    # masse with this action.  Middle policies would of course be possible
+    # but are painful to specify and implement (probably the most useful
+    # fix would be to implement a -d option to specify worktree to use other
+    # than the default).
 
     # Option and argument parsing {{{2
 
@@ -746,7 +744,7 @@ elsif ( $action eq 'cleanupall' ) { # {{{1
                    "to clean up worktrees and reset bisection anyway.\n";
     }
 
-    # git worklist records the names as absolute paths so get those
+    # git worktree list records the names as absolute paths so get those
     my $abs_wtd = abs_path($wtd);
 
     foreach ( worktree_list($abs_wtd) ) {
