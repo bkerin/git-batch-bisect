@@ -294,27 +294,48 @@ sub is_ancestor ($ra, $rb) { # {{{1
 
 } # }}}1
 
+# FIXME: try running with < parallel --number-of-threads and see if system
+# stays a bit more responsive with a thread or two to spare
+
+cnoa(\@ARGV, ">=", 1, "");
+
+my $action = shift @ARGV;
+
 # Per-repository lock {{{1
 
 my $ld = "/tmp/$pn-locks".cwd();   # Lock Dir
 make_path($ld);
 my $lf = "$ld/lock";   # Lock File
-
-(not -e $lf and sysck("touch $lf"))
-    or die "lock file $lf already exists, and only one copy of $pn per ".
-           "repository can run at a time.  If you know the lock is stale ".
-           "simply remove it";
+my $drlf = 0;   # Don't Remove Lock File
 
 # This will clean up the lock unless user kills us with an unhandleable signal
 END {
-    unlink($lf) or die "failed to unlink $lf: $!";
+    $drlf or (unlink($lf) == 1) or die "failed to unlink $lf: $!";
 }
 
+# The user is likely to want to keep the view around while doing
+# good/bad/etc. and it's read-only so that should be fine.
+#
+# FIXXME: there are other operations that could be considered read-only,
+# and visualize probably won't do anything useful while a start action is
+# in progress, but we're going to ignore those issues for the moment.
+#
+unless ( $action eq 'visualize' or $action eq 'view' ) {
+    if ( not -e $lf ) {
+        sysck("touch $lf");
+    } else {
+        $drlf = 1;   # Because we're goind to die *becase* of an existing lock
+        die "lock file $lf already exists, and only one copy of $pn per ".
+            "repository can run at a time.  If you know the lock is stale ".
+            "simply remove it";
+    }
+}
+else {
+    $drlf = 1;   # Because we don't ever create it in this case
+}
+
+
 # }}}1
-
-cnoa(\@ARGV, ">=", 1, "");
-
-my $action = shift @ARGV;
 
 if    ( $action eq 'start' ) { # {{{1
 
@@ -552,7 +573,7 @@ elsif ( $action eq 'runinall' ) { # {{{1
     my @cdp = map { cwtp($_) } @cl;   # Commit Dir Paths
 
     print 'About to run command `'.$cmd."' in all ".scalar(@cdp)." commit ".
-          "tree dirs (logging stdout and stderr in files in $wtd)\n";
+          "worktree dirs (logging stdout and stderr in files in $wtd)\n";
 
     my $qec = ($cmd =~ s/'/'"'"'/gr);   # Quote-Escaped Command
 
@@ -573,8 +594,10 @@ elsif ( $action eq 'runinall' ) { # {{{1
     close $tfh or confess;
     # Parallel Command
     my $pc = "parallel --plain --nice=17 --load=80% $mso '$wqec' :::: $tfn";
-    not system_bash $pc or die "command failed in at least one commit tree";
+    my $cf = 0;   # Command Failed
+    not system_bash $pc or ($cf = 1);
     unlink $tfn or confess;
+    not $cf or die "command failed in at least one commit tree";
 
 } # }}}1
 elsif ( $action eq 'runinrange' ) { # {{{1
