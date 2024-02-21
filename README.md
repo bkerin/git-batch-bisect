@@ -103,8 +103,8 @@ appropriate, but the stdout and stderr of the commands themselves are
 redirected to log files like for example:
 
 ```
-/home/my_repo/../my_repo.git-batch-bisect.09f4e248000679ebac8e426a40becd1903e548ac.stderr_log
-/home/my_repo/../my_repo.git-batch-bisect.09f4e248000679ebac8e426a40becd1903e548ac.stdout_log
+/home/me/my_repo/../my_repo.git-batch-bisect.09f4e248000679ebac8e426a40becd1903e548ac.stderr_log
+/home/me/my_repo/../my_repo.git-batch-bisect.09f4e248000679ebac8e426a40becd1903e548ac.stdout_log
 ```
 
 All the other commands including `runincurrent` leave stdout and stderr
@@ -128,7 +128,7 @@ them have obvious additional meanings or interactions with batch-bisect:
     In addition to its normal meaning this limits the build cache to only the
     required commits.  If you have a lot of merged branches it can make for a
     much more managable number of commits to build to first `batch-bisect` for
-    the guilty merge, the `batch-bisect` again on its branch.
+    the guilty merge, then `batch-bisect` again on its branch.
 
 ## How command quoting and invocation is done
 
@@ -209,3 +209,10 @@ worktrees but not actually starting a bisection.  This would need some checks
 relaxed in `runinall`.  I'm not sure it's worth adding wierd states like
 this since it's pretty obvious the user can get it with `batch-bisect start`
 followed by `batch-bisect reset`.
+
+- Support incremental building commit-to-commit by assuming untracked files are
+build products and copying them to the worktrees of the successor commit, then
+touching only files changed by that commit.  Or something like that.  This
+sounds somewhat hairy and risky and I'm happy to just make my computer scream,
+but there's no denying that incremental builds could be faster than parallel
+ones in some circumstances.  Or of course one could do a bit of both :)
