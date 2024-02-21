@@ -19,10 +19,10 @@ the git-batch-bisect script in your PATH.
 It's can be used almost like `git-bisect` without knowing anything more:
 
 ```
-# Start batch bisection.  This is like git bisect start but it also #
+# Start batch bisection.  This is like git bisect start but it also
 # automatically ensures that directory e.g.
-# /home/my_repo/../my_repo.batch_bisect exists and is populated with worktrees
-# for all the commits involved in the bisection:
+# /home/me/my_repo/../my_repo.batch_bisect exists and is populated with
+# worktrees for all the commits involved in the bisection:
 
 git batch-bisect start bad_commit good_commit
 
