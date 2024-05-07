@@ -29,7 +29,7 @@ my $pn = 'git-batch-bisect';   # Program Name
 sub system_bash ($cmd) { # {{{1 # Like system(), but use /bin/bash not /bin/sh
     my @args = ('/bin/bash', '-c', $cmd);
     return system(@args);
-}
+} #}}}1
 sub sysck ($cmd) { # {{{1 # Like system_bash() but error check is integrated
     not system_bash $cmd or confess "command '$cmd' returned non-zero";
 } # }}}1
