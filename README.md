@@ -67,9 +67,12 @@ git batch-bisect run ./test_script
 ```
 
 Note that if the test for the behavior can be automated easily it may be
-desirable to simply use `git bisect run` instead (though batch-bisect can still
-be used for this and will have the possibly desirable side-effect of producing
-a persistant cache of commit builds as usual).
+desirable to simply use `git bisect run` instead.  It's fine to use `git
+batch-bisect run` for this and the associated `git batch-bisect start` command
+will have the possibly desirable side-effect of producing a persistant cache of
+commit builds as usual, but note that `git batch-bisect run` has not been
+modified to work in the commit working trees (it's not different from plain
+`git bisect run`).
 
 ## Making commmand line completion work
 
